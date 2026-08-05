@@ -29,10 +29,10 @@ A traditional DCF valuation guesses a single future growth rate and profit margi
 
 ## Project structure
 
-- `R/01_ingest_and_clean.R` — cleans messy line items and extracts baseline inputs.
+- `R/01_ingest_and_clean.R` — pulls Yahoo Finance accounting statements and calibrates empirical mean and volatility ($\sigma$) parameters.
 - `R/02_ffi_bridge.R` — compiles/loads the C library and calls the kernel through `.Call()`.
-- `R/03_generate_report.R` — runs the analysis and prints the report.
-- `R/04_export_visuals.R` — generates a publication-grade PNG valuation tearsheet with ggplot2.
+- `R/03_generate_report.R` — runs the simulation bridge and prints the terminal buyout ladder and ASCII histogram.
+- `R/04_export_visuals.R` — renders a side-by-side PNG tearsheet (density distribution + executive table) with customizable themes.
 - `src/dcf_kernel.c` — Monte Carlo DCF engine written in C.
 - `Makefile` — builds the shared library used by R.
 
@@ -63,25 +63,23 @@ The main report script (`R/03_generate_report.R`) prints to terminal:
 
 ## Visualization
 
-Generate a polished valuation tearsheet:
+Generate the valuation tearsheet:
 
 ```bash
 Rscript R/04_export_visuals.R
 ```
 
-This creates `output/valuation_tearsheet.png` — a density plot showing:
+This creates `output/valuation_tearsheet.png` — a side-by-side dashboard showing:
 
-- The full valuation distribution shaded in blue
-- Downside risk (values below the hurdle) shaded in red
-- Reference lines for the median (p50), percentiles (p10 / p90), and hurdle threshold
-- Annotations with key statistics and execution time
+- **Left Panel (Distribution Chart):** A probability density curve with an outlier-clipped zoom, highlighting the median valuation, percentile bounds (`p10` / `p90`), and downside shortfall risk below the target hurdle.
+- **Right Panel (Executive Table):** A structured quantitative summary comparing mean, median, percentile boundaries, and hurdle shortfall probability.
+- **Customizable Themes:** The rendering engine supports modular visual themes (defaulting to a high-contrast dark "quant-lab" aesthetic), so colors and styling can be customized or may vary as new themes are added.
 
 ![Valuation Tearsheet](output/valuation_tearsheet.png)
 
 ## Notes
 
-- The current data cleaning step uses a small built-in example dataset.
-- The C kernel uses a Box-Muller transform to generate normal random shocks.
+- The C kernel uses a Box-Muller transform to generate normal random shocks ($Z \sim N(0,1)$).
 - The project is designed to be easy to extend with real data and additional risk factors.
 - If live Yahoo Finance API network requests fail or are rate-limited (HTTP 429 / 401), the ingestion script automatically fails over to an offline empirical baseline without breaking the execution pipeline.
 
