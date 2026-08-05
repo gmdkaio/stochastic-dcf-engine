@@ -17,18 +17,23 @@ fetch_yahoo_financials <- function(ticker = "AAPL", use_fallback = FALSE) {
   
   df <- NULL
   
-  # 1. Attempt Live API Ingestion
+ # 1. Attempt Live API Ingestion with Yahoo Cookie Handshake
   if (!use_fallback) {
     cat(sprintf("[Ingest] Querying Yahoo Finance API for '%s' financials...\n", ticker))
     
     tryCatch({
-      response <- GET(
-        url,
-        add_headers(
-          `User-Agent` = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          `Accept` = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-        )
+      # Step A: Create a persistent handle and hit Yahoo to grab a session cookie
+      yahoo_handle <- handle("https://finance.yahoo.com")
+      ua_header <- add_headers(
+        `User-Agent` = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        `Accept` = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
       )
+      
+      # Silent handshake to get the Yahoo 'B' cookie
+      GET("https://fc.yahoo.com", handle = yahoo_handle, ua_header)
+      
+      # Step B: Request the actual JSON financials using the authenticated handle
+      response <- GET(url, handle = yahoo_handle, ua_header)
       
       if (status_code(response) == 200) {
         payload <- content(response, as = "text", encoding = "UTF-8")
