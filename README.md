@@ -73,7 +73,7 @@ This creates `output/valuation_tearsheet.png` — a side-by-side dashboard showi
 
 - **Left Panel (Distribution Chart):** A probability density curve with an outlier-clipped zoom, highlighting the median valuation, percentile bounds (`p10` / `p90`), and downside shortfall risk below the target hurdle.
 - **Right Panel (Executive Table):** A structured quantitative summary comparing mean, median, percentile boundaries, and hurdle shortfall probability.
-- **Customizable Themes:** The rendering engine supports modular visual themes (defaulting to a high-contrast dark "quant-lab" aesthetic), so colors and styling can be customized or may vary as new themes are added.
+- **Customizable Themes:** The rendering engine supports modular visual themes (defaulting to a high-contrast dark theme), so colors and styling can be customized or may vary as new themes are added.
 
 ![Valuation Tearsheet](output/valuation_tearsheet.png)
 
