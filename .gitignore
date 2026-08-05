@@ -1,0 +1,16 @@
+# Compiled C binaries / Shared objects
+src/*.o
+src/*.so
+src/*.dll
+src/*.dylib
+
+# Offline data cache
+data/*.csv
+data/*.json
+
+# R history and workspace
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj
+
