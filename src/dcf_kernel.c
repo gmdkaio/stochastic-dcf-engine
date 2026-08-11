@@ -3,16 +3,12 @@
 #include <math.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <pthread.h>
 
 /* =============================================================================
- * 1. THREAD-SAFE PRNG: xoshiro256++ & SplitMix64 Seeder
+ * 1. THREAD-SAFE PRNG (xoshiro256++ & SplitMix64)
  * =============================================================================
- * Replaces standard C rand() to ensure:
- * - Thread-safety (each thread/run gets its own independent state struct)
- * - Platform-independent 64-bit precision (no RAND_MAX 32767 quantization)
- * - Extreme speed for Monte Carlo loops
  */
-
 typedef struct {
     uint64_t s[4];
     double cached_normal;
@@ -55,112 +51,134 @@ static void rng_init(rng_state_t *rng, uint64_t seed) {
     rng->cached_normal = 0.0;
 }
 
-/* =============================================================================
- * 2. OPTIMIZED BOX-MULLER TRANSFORM WITH SINE CACHING
- * =============================================================================
- * Box-Muller generates TWO independent standard normals (Z0, Z1) per pair of
- * uniform draws. Caching Z1 halves calls to log(), sqrt(), and trig functions.
- */
 static double rnorm_c(rng_state_t *rng) {
     if (rng->has_cache) {
         rng->has_cache = 0;
         return rng->cached_normal;
     }
-
-    // Convert 64-bit int to uniform double in (0, 1) using top 53 bits
     double u1 = ((xoshiro_next(rng) >> 11) + 0.5) * (1.0 / 9007199254740992.0);
     double u2 = ((xoshiro_next(rng) >> 11) + 0.5) * (1.0 / 9007199254740992.0);
-    
     double r = sqrt(-2.0 * log(u1));
     double theta = 2.0 * M_PI * u2;
-    
     rng->cached_normal = r * sin(theta);
     rng->has_cache = 1;
     return r * cos(theta);
 }
 
 /* =============================================================================
- * 3. EXPORTED C KERNEL: run_monte_carlo_dcf
+ * 2. PTHREAD WORKER CONFIGURATION
  * =============================================================================
  */
-SEXP run_monte_carlo_dcf(
-    SEXP r_n_sims,
-    SEXP r_proj_years,
-    SEXP r_base_revenue,
-    SEXP r_rev_growth_mean,
-    SEXP r_rev_growth_sd,
-    SEXP r_ebit_margin_mean,
-    SEXP r_ebit_margin_sd,
-    SEXP r_tax_rate,
-    SEXP r_wacc_mean,
-    SEXP r_wacc_sd,
-    SEXP r_term_growth
-) {
-    int n_sims           = INTEGER(r_n_sims)[0];
-    int proj_years       = INTEGER(r_proj_years)[0];
-    double base_rev      = REAL(r_base_revenue)[0];
-    double rev_mean      = REAL(r_rev_growth_mean)[0];
-    double rev_sd        = REAL(r_rev_growth_sd)[0];
-    double ebit_mean     = REAL(r_ebit_margin_mean)[0];
-    double ebit_sd       = REAL(r_ebit_margin_sd)[0];
-    double tax_rate      = REAL(r_tax_rate)[0];
-    double wacc_mean     = REAL(r_wacc_mean)[0];
-    double wacc_sd       = REAL(r_wacc_sd)[0];
-    double g             = REAL(r_term_growth)[0];
+typedef struct {
+    int start_idx;
+    int end_idx;
+    uint64_t seed;
+    int proj_years;
+    double base_rev;
+    double rev_mean;
+    double rev_sd;
+    double ebit_mean;
+    double ebit_sd;
+    double tax_rate;
+    double wacc_mean;
+    double wacc_sd;
+    double g;
+    double reinvest_rate;
+    double *out_ptr; // Shared memory array
+} thread_data_t;
 
-    /*
-     * FINANCE FIX [P0]: Reinvestment encoded as % of NOPAT (not Revenue).
-     * 20% of NOPAT is institutional standard for capital-light tech (AAPL/MSFT).
-     */
-    double reinvest_rate = 0.20;
-
-    SEXP r_out_val = PROTECT(allocVector(REALSXP, n_sims));
-    double *out_ptr = REAL(r_out_val);
-
-    // Initialize PRNG state (using fixed seed 42 for reproducible baseline audit)
+// The function each CPU core will run independently
+void *monte_carlo_worker(void *arg) {
+    thread_data_t *data = (thread_data_t *)arg;
+    
+    // Each thread gets its own isolated PRNG state
     rng_state_t rng;
-    rng_init(&rng, 42ULL);
+    rng_init(&rng, data->seed);
 
-    for (int i = 0; i < n_sims; i++) {
-        // Sample WACC (bounded to prevent zero-division near Gordon Growth floor)
-        double wacc = wacc_mean + (rnorm_c(&rng) * wacc_sd);
-        if (wacc <= g + 0.01) wacc = g + 0.01;
+    for (int i = data->start_idx; i < data->end_idx; i++) {
+        double wacc = data->wacc_mean + (rnorm_c(&rng) * data->wacc_sd);
+        if (wacc <= data->g + 0.01) wacc = data->g + 0.01;
 
-        double current_rev = base_rev;
+        double current_rev = data->base_rev;
         double pv_sum = 0.0;
         double fcff = 0.0;
 
-        for (int year = 1; year <= proj_years; year++) {
-            double rev_growth = rev_mean + (rnorm_c(&rng) * rev_sd);
+        for (int year = 1; year <= data->proj_years; year++) {
+            double rev_growth = data->rev_mean + (rnorm_c(&rng) * data->rev_sd);
             current_rev *= (1.0 + rev_growth);
 
-            double ebit_margin = ebit_mean + (rnorm_c(&rng) * ebit_sd);
+            double ebit_margin = data->ebit_mean + (rnorm_c(&rng) * data->ebit_sd);
             double ebit = current_rev * ebit_margin;
-            double nopat = ebit * (1.0 - tax_rate);
+            double nopat = ebit * (1.0 - data->tax_rate);
             
-            // Reinvestment as a proportion of NOPAT
-            double reinvestment = nopat * reinvest_rate;
+            double reinvestment = nopat * data->reinvest_rate;
             fcff = nopat - reinvestment;
 
             double df = pow(1.0 + wacc, year);
             pv_sum += (fcff / df);
         }
 
-        /*
-         * FINANCE FIX [P2]: Normalized Terminal Value.
-         * Instead of capitalizing a single noisy Year-5 draw into perpetuity,
-         * we apply expected (mean) margin to Year-5 revenue to prevent tail distortion.
-         */
-        double norm_ebit  = current_rev * ebit_mean;
-        double norm_nopat = norm_ebit * (1.0 - tax_rate);
-        double norm_fcff  = norm_nopat * (1.0 - reinvest_rate);
+        double norm_ebit  = current_rev * data->ebit_mean;
+        double norm_nopat = norm_ebit * (1.0 - data->tax_rate);
+        double norm_fcff  = norm_nopat * (1.0 - data->reinvest_rate);
 
-        double term_val = (norm_fcff * (1.0 + g)) / (wacc - g);
-        double pv_term  = term_val / pow(1.0 + wacc, (double)proj_years);
+        double term_val = (norm_fcff * (1.0 + data->g)) / (wacc - data->g);
+        double pv_term  = term_val / pow(1.0 + wacc, (double)data->proj_years);
 
-        out_ptr[i] = pv_sum + pv_term;
+        // Lock-free write to the shared array because indices never overlap
+        data->out_ptr[i] = pv_sum + pv_term;
+    }
+    return NULL;
+}
+
+/* =============================================================================
+ * 3. EXPORTED C KERNEL (THE DISPATCHER)
+ * =============================================================================
+ */
+SEXP run_monte_carlo_dcf(
+    SEXP r_n_sims, SEXP r_proj_years, SEXP r_base_revenue, SEXP r_rev_growth_mean,
+    SEXP r_rev_growth_sd, SEXP r_ebit_margin_mean, SEXP r_ebit_margin_sd,
+    SEXP r_tax_rate, SEXP r_wacc_mean, SEXP r_wacc_sd, SEXP r_term_growth
+) {
+    int n_sims = INTEGER(r_n_sims)[0];
+    
+    // Allocate memory in R's heap BEFORE spawning threads (critical for safety)
+    SEXP r_out_val = PROTECT(allocVector(REALSXP, n_sims));
+    double *out_ptr = REAL(r_out_val);
+
+    int NUM_THREADS = 12;
+    pthread_t threads[NUM_THREADS];
+    thread_data_t t_data[NUM_THREADS];
+
+    int chunk_size = n_sims / NUM_THREADS;
+
+    // Dispatch workers
+    for (int t = 0; t < NUM_THREADS; t++) {
+        t_data[t].start_idx = t * chunk_size;
+        t_data[t].end_idx = (t == NUM_THREADS - 1) ? n_sims : (t + 1) * chunk_size;
+        t_data[t].seed = 42ULL + t; // Seed stagger ensures true independence
+        
+        t_data[t].proj_years = INTEGER(r_proj_years)[0];
+        t_data[t].base_rev = REAL(r_base_revenue)[0];
+        t_data[t].rev_mean = REAL(r_rev_growth_mean)[0];
+        t_data[t].rev_sd = REAL(r_rev_growth_sd)[0];
+        t_data[t].ebit_mean = REAL(r_ebit_margin_mean)[0];
+        t_data[t].ebit_sd = REAL(r_ebit_margin_sd)[0];
+        t_data[t].tax_rate = REAL(r_tax_rate)[0];
+        t_data[t].wacc_mean = REAL(r_wacc_mean)[0];
+        t_data[t].wacc_sd = REAL(r_wacc_sd)[0];
+        t_data[t].g = REAL(r_term_growth)[0];
+        t_data[t].reinvest_rate = 0.20;
+        t_data[t].out_ptr = out_ptr;
+
+        pthread_create(&threads[t], NULL, monte_carlo_worker, &t_data[t]);
+    }
+
+    // Wait for all 12 threads to cross the finish line
+    for (int t = 0; t < NUM_THREADS; t++) {
+        pthread_join(threads[t], NULL);
     }
 
     UNPROTECT(1);
     return r_out_val;
-}   
+}
