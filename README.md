@@ -6,7 +6,7 @@ A simple R + C valuation pipeline for running Monte Carlo Discounted Cash Flow (
 
 1. Reads and cleans accounting-style input data in R.
 2. Sends the cleaned model inputs to a compiled C kernel.
-3. Runs 1,000,000 DCF simulations.
+3. Runs 1,000,000 DCF simulations across 12 parallel threads.
 4. Prints a short valuation summary and an ASCII histogram in the terminal.
 
 ## How the finance works
@@ -21,8 +21,11 @@ A traditional DCF valuation guesses a single future growth rate and profit margi
 2. **The Stochastic Shocks (Monte Carlo):**
 
    - Instead of using flat percentages, **Revenue Growth**, **Profit Margins**, and **Interest Rates** are modeled as bell curves based on the company's actual historical ups and downs.
-   - In C, a math algorithm (the Box-Muller transform) generates random, realistic yearly shocks across all 1,000,000 simulated paths.
-3. **Where the Numbers Come From:**
+   - The C kernel uses a thread-safe xoshiro256++ PRNG (seeded independently per thread via SplitMix64) to generate random, realistic yearly shocks across all 1,000,000 simulated paths.
+3. **Multithreading:**
+
+   - The 1,000,000 paths are split across 12 POSIX threads. Each thread runs an isolated PRNG state, so writes to the shared output array never overlap and no locking is needed.
+4. **Where the Numbers Come From:**
 
    - Currently, historical revenue and margin volatility are pulled directly from Yahoo Finance, while structural rules (like reinvestment rates) use standard defaults in the C kernel.
    - *Next step:* Decoupling those defaults so you can customize assumptions on the fly via a command-line flag or GUI, or have them auto-adjust based on the company's industry.
@@ -33,7 +36,7 @@ A traditional DCF valuation guesses a single future growth rate and profit margi
 - `R/02_ffi_bridge.R` — compiles/loads the C library and calls the kernel through `.Call()`.
 - `R/03_generate_report.R` — runs the simulation bridge and prints the terminal buyout ladder and ASCII histogram.
 - `R/04_export_visuals.R` — renders a side-by-side PNG tearsheet (density distribution + executive table) with customizable themes.
-- `src/dcf_kernel.c` — Monte Carlo DCF engine written in C.
+- `src/dcf_kernel.c` — Monte Carlo DCF engine written in C, using POSIX threads and xoshiro256++.
 - `Makefile` — builds the shared library used by R.
 
 ## Requirements
@@ -58,7 +61,7 @@ The main report script (`R/03_generate_report.R`) prints to terminal:
 - simulation count and execution time
 - enterprise value percentiles
 - mean valuation
-- shortfall risk versus a hurdle value
+- shortfall risk versus a configurable hurdle value
 - a simple ASCII histogram
 
 ## Visualization
@@ -79,14 +82,13 @@ This creates `output/valuation_tearsheet.png` — a side-by-side dashboard showi
 
 ## Notes
 
-- The C kernel uses a Box-Muller transform to generate normal random shocks ($Z \sim N(0,1)$).
+- The C kernel uses xoshiro256++ with SplitMix64 seeding to generate normal random shocks ($Z \sim N(0,1)$) across 12 independent threads.
 - The project is designed to be easy to extend with real data and additional risk factors.
-- Windows observation: loading a hardcoded `.so` library will fail; the dynamic library extension must match the platform (for example, `.dll` on Windows). > Did not notice before because I was running it on Linux only. 
+- The `Makefile` and FFI bridge detect the platform's dynamic library extension at build time (`.so` on Linux/macOS, `.dll` on Windows), so cross-platform builds work without manual changes.
 - If live Yahoo Finance API network requests fail or are rate-limited (HTTP 429 / 401), the ingestion script automatically fails over to an offline empirical baseline without breaking the execution pipeline.
 
 ## To do
 
-- [ ] **POSIX Multithreading (`pthreads`):** Split the 1,000,000 simulations across multiple CPU cores to drop execution time under 0.08 seconds.
 - [ ] **Dynamic Driver Configuration:** Replace hardcoded C-kernel defaults (like reinvestment rate and projection years) with customizable inputs — likely via a GUI or CLI flags.
 - [ ] **Industry Segment Profiling:** Automatically adjust baseline financial assumptions depending on whether the target company is in tech, retail, manufacturing, etc.
 - [ ] **Correlated Economic Shocks:** Link variables together so that when interest rates spike in a simulation, operating margins react realistically instead of moving independently.
