@@ -96,8 +96,14 @@ void *monte_carlo_worker(void *arg) {
     rng_init(&rng, data->seed);
 
     for (int i = data->start_idx; i < data->end_idx; i++) {
-        double wacc = data->wacc_mean + (rnorm_c(&rng) * data->wacc_sd);
-        if (wacc <= data->g + 0.01) wacc = data->g + 0.01;
+        
+        // FINANCE FIX [P0]: Rejection sampling for WACC.
+        // Ensures a minimum 1.5% economic spread over perpetual growth 
+        // without stacking probability mass on a hard boundary.
+        double wacc;
+        do {
+            wacc = data->wacc_mean + (rnorm_c(&rng) * data->wacc_sd);
+        } while (wacc <= data->g + 0.015);
 
         double current_rev = data->base_rev;
         double pv_sum = 0.0;

@@ -4,17 +4,37 @@
 # 1. Load empirically calibrated parameters from ingest module
 source("R/01_ingest_and_clean.R")
 
-# 2. Compile and load shared C library if not already loaded
+# 2. Compile and load shared C library (with mtime recompilation)
+c_source <- "src/dcf_kernel.c"
 lib_path <- file.path("src", paste0("dcf_kernel", .Platform$dynlib.ext))
 
-if (!file.exists(lib_path)) {
-  cat("[FFI Bridge] Compiling C simulation kernel...\n")
+needs_compile <- TRUE
+if (file.exists(lib_path) && file.exists(c_source)) {
+  c_time <- file.info(c_source)$mtime
+  lib_time <- file.info(lib_path)$mtime
+  if (c_time < lib_time) {
+    needs_compile <- FALSE
+  }
+}
+
+# Must unload the DLL on Windows before overwriting, otherwise it is locked by the OS
+if (needs_compile && is.loaded("run_monte_carlo_dcf")) {
+  dyn.unload(lib_path)
+}
+
+if (needs_compile) {
+  cat("[FFI Bridge] C source changes detected. Compiling kernel...\n")
   # Avoid stale object/library artifacts built by a different compiler toolchain.
   unlink(c("src/dcf_kernel.o", "src/dcf_kernel.so", "src/dcf_kernel.dll"), force = TRUE)
   system2(
     command = file.path(R.home("bin"), "R"),
-    args = c("CMD", "SHLIB", "src/dcf_kernel.c", "-o", lib_path)
+    args = c("CMD", "SHLIB", c_source, "-o", lib_path)
   )
+  if (!file.exists(lib_path)) {
+    stop("Compilation failed. Check C toolchain.")
+  }
+} else {
+  cat("[FFI Bridge] Kernel is up to date. Skipping compilation.\n")
 }
 
 if (!is.loaded("run_monte_carlo_dcf")) {
