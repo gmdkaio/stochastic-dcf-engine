@@ -5,11 +5,16 @@
 source("R/01_ingest_and_clean.R")
 
 # 2. Compile and load shared C library if not already loaded
-lib_path <- "src/dcf_kernel.so"
+lib_path <- file.path("src", paste0("dcf_kernel", .Platform$dynlib.ext))
 
 if (!file.exists(lib_path)) {
   cat("[FFI Bridge] Compiling C simulation kernel...\n")
-  system("R CMD SHLIB src/dcf_kernel.c")
+  # Avoid stale object/library artifacts built by a different compiler toolchain.
+  unlink(c("src/dcf_kernel.o", "src/dcf_kernel.so", "src/dcf_kernel.dll"), force = TRUE)
+  system2(
+    command = file.path(R.home("bin"), "R"),
+    args = c("CMD", "SHLIB", "src/dcf_kernel.c", "-o", lib_path)
+  )
 }
 
 if (!is.loaded("run_monte_carlo_dcf")) {
