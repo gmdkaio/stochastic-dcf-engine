@@ -6,7 +6,7 @@ A simple R + C valuation pipeline for running Monte Carlo Discounted Cash Flow (
 
 1. Reads and cleans accounting-style input data in R.
 2. Sends the cleaned model inputs to a compiled C kernel.
-3. Runs 1,000,000 DCF simulations across 12 parallel threads.
+3. Runs 1,000,000 DCF simulations across the available CPU cores.
 4. Prints a short valuation summary and an ASCII histogram in the terminal.
 
 ## How the finance works
@@ -21,21 +21,23 @@ A traditional DCF valuation guesses a single future growth rate and profit margi
 2. **The Stochastic Shocks (Monte Carlo):**
 
    - Instead of using flat percentages, **Revenue Growth**, **Profit Margins**, and **Interest Rates** are modeled as bell curves based on the company's actual historical ups and downs.
+   - **Macroeconomic Correlation:** The engine does not treat variables in isolation. It uses a Cholesky Decomposition matrix to correlate the random draws. For example, if a simulation path draws a terrible macroeconomic environment (high interest rates), the Cholesky weights actively drag down revenue growth and compress profit margins for that specific path, creating highly realistic compounding risk cycles.
    - The C kernel uses a thread-safe xoshiro256++ PRNG (seeded independently per thread via SplitMix64) to generate random, realistic yearly shocks across all 1,000,000 simulated paths.
 3. **Multithreading:**
 
-   - The 1,000,000 paths are split across 12 POSIX threads. Each thread runs an isolated PRNG state, so writes to the shared output array never overlap and no locking is needed.
+   - The 1,000,000 paths are split across the available CPU cores. Each worker runs an isolated PRNG state, so writes to the shared output array never overlap and no locking is needed.
 4. **Where the Numbers Come From:**
 
-   - Currently, historical revenue and margin volatility are pulled directly from Yahoo Finance, while structural rules (like reinvestment rates) use standard defaults in the C kernel.
+   - Currently, historical revenue and margin volatility are pulled directly from Yahoo Finance. Because the free API only provides 4 years of annuals, the R script applies Bayesian Shrinkage to blend the empirical data with a broader sector prior, ensuring the standard deviation ($\sigma$) is statistically robust.
+   - The C kernel enforces mathematical boundary clamps to prevent physically impossible black-swan draws (e.g., a company's revenue dropping by 150%).
    - *Next step:* Decoupling those defaults so you can customize assumptions on the fly via a command-line flag or GUI, or have them auto-adjust based on the company's industry.
 
 ## Project structure
 
 - `R/01_ingest_and_clean.R` — pulls Yahoo Finance accounting statements and calibrates empirical mean and volatility ($\sigma$) parameters.
 - `R/02_ffi_bridge.R` — compiles/loads the C library and calls the kernel through `.Call()`.
-- `R/03_generate_report.R` — runs the simulation bridge and prints the terminal buyout ladder and ASCII histogram.
-- `R/04_export_visuals.R` — renders a side-by-side PNG tearsheet (density distribution + executive table) with customizable themes.
+- `R/03_generate_report.R` — runs the simulation bridge and prints the terminal valuation summary and ASCII histogram.
+- `R/04_export_visuals.R` — renders a side-by-side PNG tearsheet (density distribution + executive table) with a theme scaffold that currently ships with a high-contrast dark palette.
 - `src/dcf_kernel.c` — Monte Carlo DCF engine written in C, using POSIX threads and xoshiro256++.
 - `Makefile` — builds the shared library used by R.
 
@@ -61,7 +63,7 @@ The main report script (`R/03_generate_report.R`) prints to terminal:
 - simulation count and execution time
 - enterprise value percentiles
 - mean valuation
-- shortfall risk versus a configurable hurdle value
+- shortfall risk versus the hurdle target
 - a simple ASCII histogram
 
 ## Visualization
@@ -76,20 +78,19 @@ This creates `output/valuation_tearsheet.png` — a side-by-side dashboard showi
 
 - **Left Panel (Distribution Chart):** A probability density curve with an outlier-clipped zoom, highlighting the median valuation, percentile bounds (`p10` / `p90`), and downside shortfall risk below the target hurdle.
 - **Right Panel (Executive Table):** A structured quantitative summary comparing mean, median, percentile boundaries, and hurdle shortfall probability.
-- **Customizable Themes:** The rendering engine supports modular visual themes (defaulting to a high-contrast dark theme), so colors and styling can be customized or may vary as new themes are added.
+- **Theme-Ready Styling:** The rendering engine currently ships with a high-contrast dark palette, and the theme structure is set up so additional palettes can be added later with minimal changes.
 
 ![Valuation Tearsheet](output/valuation_tearsheet.png)
 
 ## Notes
 
-- The C kernel uses xoshiro256++ with SplitMix64 seeding to generate normal random shocks ($Z \sim N(0,1)$) across 12 independent threads.
+- The C kernel uses xoshiro256++ with SplitMix64 seeding to generate normal random shocks ($Z \sim N(0,1)$) across dynamically allocated threads based on the host system's CPU core count.
 - The project is designed to be easy to extend with real data and additional risk factors.
 - The `Makefile` and FFI bridge detect the platform's dynamic library extension at build time (`.so` on Linux/macOS, `.dll` on Windows), so cross-platform builds work without manual changes.
 - If live Yahoo Finance API network requests fail or are rate-limited (HTTP 429 / 401), the ingestion script automatically fails over to an offline empirical baseline without breaking the execution pipeline.
 
 ## To do
 
-- [ ] **Dynamic Driver Configuration:** Replace hardcoded C-kernel defaults (like reinvestment rate and projection years) with customizable inputs — likely via a GUI or CLI flags.
+- [ ] **Dynamic Driver Configuration:** Replace hardcoded model defaults (like reinvestment rate, hurdle target, and projection years) with customizable inputs — likely via a GUI, config file, or CLI flags.
 - [ ] **Industry Segment Profiling:** Automatically adjust baseline financial assumptions depending on whether the target company is in tech, retail, manufacturing, etc.
-- [ ] **Correlated Economic Shocks:** Link variables together so that when interest rates spike in a simulation, operating margins react realistically instead of moving independently.
 - [ ] **Buyout Premium Ladder:** Add a summary table showing the exact probability of an M&A acquisition at different price markups (+15%, +30%, +45%).
