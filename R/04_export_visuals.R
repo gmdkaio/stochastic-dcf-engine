@@ -29,13 +29,13 @@ palettes <- list(
 pal <- palettes[[active_theme]]
 
 # 3. Extract Metrics & Set Exogenous Hurdle
-ev_mean   <- mean(enterprise_values)
+ev_mean <- mean(enterprise_values)
 ev_median <- median(enterprise_values)
-p10       <- quantile(enterprise_values, 0.10)
-p90       <- quantile(enterprise_values, 0.90)
-p98       <- quantile(enterprise_values, 0.98) 
+p10 <- quantile(enterprise_values, 0.10)
+p90 <- quantile(enterprise_values, 0.90)
+p98 <- quantile(enterprise_values, 0.98)
 
-target_hurdle  <- 1000000.0 # Exogenous $1.0T Hurdle
+target_hurdle <- 1000000.0 # Exogenous $1.0T Hurdle
 shortfall_prob <- mean(enterprise_values < target_hurdle) * 100
 
 dens <- density(enterprise_values, n = 2048)
@@ -51,12 +51,16 @@ p_chart <- ggplot(dens_df, aes(x = ev, y = density)) +
   geom_vline(xintercept = ev_median, color = pal$text_main, linewidth = 0.9, linetype = "solid") +
   geom_vline(xintercept = c(p10, p90), color = pal$text_sub, linewidth = 0.6, linetype = "dashed") +
   geom_vline(xintercept = target_hurdle, color = pal$hurdle_l, linewidth = 1.1, linetype = "twodash") +
-  annotate("text", x = ev_median, y = max(dens_df$density) * 0.92, 
-           label = sprintf(" Median (%s)", format_millions(ev_median)),
-           hjust = -0.05, fontface = "bold", color = pal$text_main, size = 3.8) +
-  annotate("text", x = target_hurdle, y = max(dens_df$density) * 0.75, 
-           label = sprintf(" Hurdle (%s | %.1f%% Risk)", format_millions(target_hurdle), shortfall_prob),
-           hjust = 1.05, fontface = "bold", color = pal$hurdle_l, size = 3.8) +
+  annotate("text",
+    x = ev_median, y = max(dens_df$density) * 0.92,
+    label = sprintf(" Median (%s)", format_millions(ev_median)),
+    hjust = -0.05, fontface = "bold", color = pal$text_main, size = 3.8
+  ) +
+  annotate("text",
+    x = target_hurdle, y = max(dens_df$density) * 0.75,
+    label = sprintf(" Hurdle (%s | %.1f%% Risk)", format_millions(target_hurdle), shortfall_prob),
+    hjust = 1.05, fontface = "bold", color = pal$hurdle_l, size = 3.8
+  ) +
   coord_cartesian(xlim = c(min(enterprise_values) * 0.85, p98)) +
   scale_x_continuous(labels = function(x) sapply(x, format_millions)) +
   scale_y_continuous(labels = label_number(scale_cut = cut_short_scale())) +

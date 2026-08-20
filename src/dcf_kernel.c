@@ -9,17 +9,20 @@
  * 1. THREAD-SAFE PRNG (xoshiro256++ & SplitMix64)
  * =============================================================================
  */
-typedef struct {
+typedef struct
+{
     uint64_t s[4];
     double cached_normal;
     int has_cache;
 } rng_state_t;
 
-static inline uint64_t rotl(const uint64_t x, int k) {
+static inline uint64_t rotl(const uint64_t x, int k)
+{
     return (x << k) | (x >> (64 - k));
 }
 
-static inline uint64_t xoshiro_next(rng_state_t *rng) {
+static inline uint64_t xoshiro_next(rng_state_t *rng)
+{
     const uint64_t result = rotl(rng->s[0] + rng->s[3], 23) + rng->s[0];
     const uint64_t t = rng->s[1] << 17;
 
@@ -34,14 +37,16 @@ static inline uint64_t xoshiro_next(rng_state_t *rng) {
     return result;
 }
 
-static uint64_t splitmix64(uint64_t *x) {
+static uint64_t splitmix64(uint64_t *x)
+{
     uint64_t z = (*x += 0x9e3779b97f4a7c15ULL);
     z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
     z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
     return z ^ (z >> 31);
 }
 
-static void rng_init(rng_state_t *rng, uint64_t seed) {
+static void rng_init(rng_state_t *rng, uint64_t seed)
+{
     uint64_t sm_state = seed ? seed : 88172645463325252ULL;
     rng->s[0] = splitmix64(&sm_state);
     rng->s[1] = splitmix64(&sm_state);
@@ -51,8 +56,10 @@ static void rng_init(rng_state_t *rng, uint64_t seed) {
     rng->cached_normal = 0.0;
 }
 
-static double rnorm_c(rng_state_t *rng) {
-    if (rng->has_cache) {
+static double rnorm_c(rng_state_t *rng)
+{
+    if (rng->has_cache)
+    {
         rng->has_cache = 0;
         return rng->cached_normal;
     }
@@ -69,7 +76,8 @@ static double rnorm_c(rng_state_t *rng) {
  * 2. PTHREAD WORKER CONFIGURATION
  * =============================================================================
  */
-typedef struct {
+typedef struct
+{
     int start_idx;
     int end_idx;
     uint64_t seed;
@@ -89,16 +97,19 @@ typedef struct {
 } thread_data_t;
 
 // The function each CPU core will run independently
-void *monte_carlo_worker(void *arg) {
+void *monte_carlo_worker(void *arg)
+{
     thread_data_t *data = (thread_data_t *)arg;
     rng_state_t rng;
     rng_init(&rng, data->seed);
 
-    for (int i = data->start_idx; i < data->end_idx; i++) {
-        
+    for (int i = data->start_idx; i < data->end_idx; i++)
+    {
+
         // 1. Draw WACC (Z1 - Macro Anchor)
         double z_wacc, wacc;
-        do {
+        do
+        {
             z_wacc = rnorm_c(&rng);
             // Z1 is directly scaled because L11 is always 1.0
             wacc = data->wacc_mean + (z_wacc * data->wacc_sd);
@@ -108,24 +119,36 @@ void *monte_carlo_worker(void *arg) {
         double pv_sum = 0.0;
         double fcff = 0.0;
 
-        for (int year = 1; year <= data->proj_years; year++) {
-            
+        for (int year = 1; year <= data->proj_years; year++)
+        {
+
             // 2. Draw independent yearly shocks
             double z_rev = rnorm_c(&rng);
             double z_margin = rnorm_c(&rng);
 
             // 3. Apply Cholesky weights to create correlated shocks
-            double x_rev    = (data->L21 * z_wacc) + (data->L22 * z_rev);
+            double x_rev = (data->L21 * z_wacc) + (data->L22 * z_rev);
             double x_margin = (data->L31 * z_wacc) + (data->L32 * z_rev) + (data->L33 * z_margin);
 
-            // 4. Apply shocks to empirical means
+            // 4. Apply shocks to empirical means with Safety Bounds
             double rev_growth = data->rev_mean + (x_rev * data->rev_sd);
+
+            // Guard: Revenue cannot drop more than 95% in a single year
+            if (rev_growth < -0.95)
+                rev_growth = -0.95;
             current_rev *= (1.0 + rev_growth);
 
             double ebit_margin = data->ebit_mean + (x_margin * data->ebit_sd);
+
+            // Guard: Prevent infinite cash burn or impossible profitability
+            if (ebit_margin < -0.50)
+                ebit_margin = -0.50;
+            if (ebit_margin > 0.80)
+                ebit_margin = 0.80;
+
             double ebit = current_rev * ebit_margin;
             double nopat = ebit * (1.0 - data->tax_rate);
-            
+
             double reinvestment = nopat * data->reinvest_rate;
             fcff = nopat - reinvestment;
 
@@ -133,12 +156,12 @@ void *monte_carlo_worker(void *arg) {
             pv_sum += (fcff / df);
         }
 
-        double norm_ebit  = current_rev * data->ebit_mean;
+        double norm_ebit = current_rev * data->ebit_mean;
         double norm_nopat = norm_ebit * (1.0 - data->tax_rate);
-        double norm_fcff  = norm_nopat * (1.0 - data->reinvest_rate);
+        double norm_fcff = norm_nopat * (1.0 - data->reinvest_rate);
 
         double term_val = (norm_fcff * (1.0 + data->g)) / (wacc - data->g);
-        double pv_term  = term_val / pow(1.0 + wacc, (double)data->proj_years);
+        double pv_term = term_val / pow(1.0 + wacc, (double)data->proj_years);
 
         data->out_ptr[i] = pv_sum + pv_term;
     }
@@ -150,30 +173,32 @@ void *monte_carlo_worker(void *arg) {
  * =============================================================================
  */
 SEXP run_monte_carlo_dcf(
-    SEXP r_n_sims, SEXP r_num_threads, SEXP r_proj_years, SEXP r_base_revenue, 
-    SEXP r_rev_growth_mean, SEXP r_rev_growth_sd, SEXP r_ebit_margin_mean, 
-    SEXP r_ebit_margin_sd, SEXP r_tax_rate, SEXP r_wacc_mean, SEXP r_wacc_sd, 
-    SEXP r_term_growth, SEXP r_chol_weights
-) {
+    SEXP r_n_sims, SEXP r_num_threads, SEXP r_proj_years, SEXP r_base_revenue,
+    SEXP r_rev_growth_mean, SEXP r_rev_growth_sd, SEXP r_ebit_margin_mean,
+    SEXP r_ebit_margin_sd, SEXP r_tax_rate, SEXP r_wacc_mean, SEXP r_wacc_sd,
+    SEXP r_term_growth, SEXP r_chol_weights)
+{
     int n_sims = INTEGER(r_n_sims)[0];
     int NUM_THREADS = INTEGER(r_num_threads)[0];
-    if (NUM_THREADS < 1) NUM_THREADS = 1;
-    
+    if (NUM_THREADS < 1)
+        NUM_THREADS = 1;
+
     SEXP r_out_val = PROTECT(allocVector(REALSXP, n_sims));
     double *out_ptr = REAL(r_out_val);
 
     pthread_t threads[NUM_THREADS];
     thread_data_t t_data[NUM_THREADS];
     int chunk_size = n_sims / NUM_THREADS;
-    
+
     // Unpack Cholesky weights from R
     double *chol = REAL(r_chol_weights);
 
-    for (int t = 0; t < NUM_THREADS; t++) {
+    for (int t = 0; t < NUM_THREADS; t++)
+    {
         t_data[t].start_idx = t * chunk_size;
         t_data[t].end_idx = (t == NUM_THREADS - 1) ? n_sims : (t + 1) * chunk_size;
-        t_data[t].seed = 42ULL + t; 
-        
+        t_data[t].seed = 42ULL + t;
+
         t_data[t].proj_years = INTEGER(r_proj_years)[0];
         t_data[t].base_rev = REAL(r_base_revenue)[0];
         t_data[t].rev_mean = REAL(r_rev_growth_mean)[0];
@@ -185,7 +210,7 @@ SEXP run_monte_carlo_dcf(
         t_data[t].wacc_sd = REAL(r_wacc_sd)[0];
         t_data[t].g = REAL(r_term_growth)[0];
         t_data[t].reinvest_rate = 0.20;
-        
+
         // Pass weights into thread struct
         t_data[t].L11 = chol[0];
         t_data[t].L21 = chol[1];
@@ -199,7 +224,8 @@ SEXP run_monte_carlo_dcf(
         pthread_create(&threads[t], NULL, monte_carlo_worker, &t_data[t]);
     }
 
-    for (int t = 0; t < NUM_THREADS; t++) {
+    for (int t = 0; t < NUM_THREADS; t++)
+    {
         pthread_join(threads[t], NULL);
     }
 
