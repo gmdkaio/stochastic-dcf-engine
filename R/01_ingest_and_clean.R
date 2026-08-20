@@ -94,18 +94,19 @@ fetch_yahoo_financials <- function(ticker = "AAPL", use_fallback = FALSE) {
   shrunk_rev_sd <- (weight_empirical * raw_rev_sd) + ((1 - weight_empirical) * prior_rev_sd)
   shrunk_ebit_sd <- (weight_empirical * raw_ebit_sd) + ((1 - weight_empirical) * prior_ebit_sd)
 
-  # 4. Pack Calibrated Inputs for the C Monte Carlo Kernel
+# 4. Pack Calibrated Inputs for the C Monte Carlo Kernel
   baseline <- list(
     ticker           = ticker,
     initial_revenue  = tail(df$revenue, 1),
     rev_growth_mean  = mean(rev_growth_clean),
-    rev_growth_sd    = shrunk_rev_sd, # <-- Applied shrinkage
+    rev_growth_sd    = shrunk_rev_sd,
     ebit_margin      = mean(ebit_margin_clean),
-    ebit_sd          = shrunk_ebit_sd, # <-- Applied shrinkage
+    ebit_sd          = shrunk_ebit_sd,
     tax_rate         = 0.21,
     wacc_mean        = 0.088,
     wacc_sd          = 0.012,
     terminal_growth  = 0.025,
+    reinvest_rate    = 0.20,            # <-- NEW: Decoupled from C
     projection_years = 5
   )
 

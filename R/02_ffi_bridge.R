@@ -75,8 +75,8 @@ timer <- system.time({
     as.numeric(model_inputs$wacc_mean),
     as.numeric(model_inputs$wacc_sd),
     as.numeric(model_inputs$terminal_growth),
-    as.numeric(chol_weights) # <-- NEW: Passing the Cholesky weights
+    as.numeric(chol_weights),
+    as.numeric(model_inputs$reinvest_rate)      # <-- NEW: Passing to C
   )
 })
-
 cat(sprintf("[FFI Bridge] Completed 1,000,000 simulations in %.3f seconds.\n", timer["elapsed"]))

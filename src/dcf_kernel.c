@@ -173,15 +173,14 @@ void *monte_carlo_worker(void *arg)
  * =============================================================================
  */
 SEXP run_monte_carlo_dcf(
-    SEXP r_n_sims, SEXP r_num_threads, SEXP r_proj_years, SEXP r_base_revenue,
-    SEXP r_rev_growth_mean, SEXP r_rev_growth_sd, SEXP r_ebit_margin_mean,
-    SEXP r_ebit_margin_sd, SEXP r_tax_rate, SEXP r_wacc_mean, SEXP r_wacc_sd,
-    SEXP r_term_growth, SEXP r_chol_weights)
-{
+    SEXP r_n_sims, SEXP r_num_threads, SEXP r_proj_years, SEXP r_base_revenue, 
+    SEXP r_rev_growth_mean, SEXP r_rev_growth_sd, SEXP r_ebit_margin_mean, 
+    SEXP r_ebit_margin_sd, SEXP r_tax_rate, SEXP r_wacc_mean, SEXP r_wacc_sd, 
+    SEXP r_term_growth, SEXP r_chol_weights, SEXP r_reinvest_rate
+) {
     int n_sims = INTEGER(r_n_sims)[0];
     int NUM_THREADS = INTEGER(r_num_threads)[0];
-    if (NUM_THREADS < 1)
-        NUM_THREADS = 1;
+    if (NUM_THREADS < 1) NUM_THREADS = 1;
 
     SEXP r_out_val = PROTECT(allocVector(REALSXP, n_sims));
     double *out_ptr = REAL(r_out_val);
@@ -209,7 +208,9 @@ SEXP run_monte_carlo_dcf(
         t_data[t].wacc_mean = REAL(r_wacc_mean)[0];
         t_data[t].wacc_sd = REAL(r_wacc_sd)[0];
         t_data[t].g = REAL(r_term_growth)[0];
-        t_data[t].reinvest_rate = 0.20;
+        
+        // DYNAMIC ASSIGNMENT (No longer hardcoded to 0.20)
+        t_data[t].reinvest_rate = REAL(r_reinvest_rate)[0];
 
         // Pass weights into thread struct
         t_data[t].L11 = chol[0];
@@ -221,7 +222,16 @@ SEXP run_monte_carlo_dcf(
 
         t_data[t].out_ptr = out_ptr;
 
-        pthread_create(&threads[t], NULL, monte_carlo_worker, &t_data[t]);
+        // SAFE THREAD CREATION
+        int rc = pthread_create(&threads[t], NULL, monte_carlo_worker, &t_data[t]);
+        
+        if (rc != 0) {
+            // Clean up already spawned threads before aborting
+            for (int j = 0; j < t; j++) {
+                pthread_join(threads[j], NULL);
+            }
+            error("Failed to create POSIX thread %d (Error code: %d). Check system limits.", t, rc);
+        }
     }
 
     for (int t = 0; t < NUM_THREADS; t++)
