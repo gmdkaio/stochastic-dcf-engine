@@ -2,6 +2,7 @@
 # Renders a side-by-side valuation tearsheet with customizable quant themes and outlier clipping.
 
 suppressPackageStartupMessages({
+  library(optparse)
   library(ggplot2)
   library(gridExtra)
   library(grid)
@@ -10,14 +11,39 @@ suppressPackageStartupMessages({
 })
 
 dir.create("output", showWarnings = FALSE)
-source("R/02_ffi_bridge.R")
 
-# 1. Formatting Helper
+# 1. Define command-line flags
+option_list <- list(
+  make_option(c("-t", "--ticker"), type="character", default="AAPL", 
+              help="Stock ticker symbol [default: %default]"),
+  make_option(c("-y", "--years"), type="integer", default=5, 
+              help="Number of projection years [default: %default]"),
+  make_option(c("-r", "--reinvest"), type="numeric", default=0.20, 
+              help="Reinvestment rate (e.g., 0.20 for 20%) [default: %default]")
+)
+
+opt_parser <- OptionParser(option_list=option_list, description="Stochastic DCF Valuation Engine - Visuals")
+opt <- parse_args(opt_parser)
+
+# 2. Source the data ingestion function
+source("R/01_ingest_and_clean.R", encoding = "UTF-8")
+
+# 3. Fetch data dynamically based on the CLI ticker
+model_inputs <- fetch_yahoo_financials(opt$ticker)
+
+# 4. Override defaults with CLI inputs
+model_inputs$projection_years <- opt$years
+model_inputs$reinvest_rate <- opt$reinvest
+
+# 5. Execute FFI Bridge
+source("R/02_ffi_bridge.R", encoding = "UTF-8")
+
+# 6. Formatting Helper
 format_millions <- function(x) {
   ifelse(is.na(x), "", ifelse(abs(x) >= 1e6, sprintf("$%.2fT", x / 1e6), sprintf("$%.1fB", x / 1e3)))
 }
 
-# 2. Select Visual Theme
+# 7. Select Visual Theme
 active_theme <- "lab"
 
 palettes <- list(
@@ -28,7 +54,7 @@ palettes <- list(
 )
 pal <- palettes[[active_theme]]
 
-# 3. Extract Metrics & Set Exogenous Hurdle
+# 8. Extract Metrics & Set Exogenous Hurdle
 ev_mean <- mean(enterprise_values)
 ev_median <- median(enterprise_values)
 p10 <- quantile(enterprise_values, 0.10)
@@ -43,7 +69,7 @@ dens_df <- data.frame(ev = dens$x, density = dens$y)
 
 cat(sprintf("Rendering side-by-side tearsheet (%s theme) to 'output/valuation_tearsheet.png'...\n", active_theme))
 
-# 4. Left Panel: Density Curve
+# 9. Left Panel: Density Curve
 p_chart <- ggplot(dens_df, aes(x = ev, y = density)) +
   geom_area(fill = pal$density, alpha = 0.35) +
   geom_area(data = subset(dens_df, ev < target_hurdle), aes(x = ev, y = density), fill = pal$hurdle, alpha = 0.55) +
@@ -82,7 +108,7 @@ p_chart <- ggplot(dens_df, aes(x = ev, y = density)) +
     plot.subtitle = element_text(size = 10, color = pal$text_sub, margin = margin(b = 12))
   )
 
-# 5. Right Panel: Quant Table
+# 10. Right Panel: Quant Table
 table_data <- data.frame(
   Metric = c("Mean Valuation", "Median (P50)", "10th Percentile", "90th Percentile", "Hurdle Shortfall"),
   Value = c(
@@ -107,10 +133,10 @@ tt <- ttheme_minimal(
 
 p_table <- tableGrob(table_data, rows = NULL, theme = tt)
 
-# 6. Assembly
+# 11. Assembly
 output_path <- "output/valuation_tearsheet.png"
 png(output_path, width = 1400, height = 650, res = 130, bg = pal$bg)
 grid.arrange(p_chart, p_table, ncol = 2, widths = c(2.3, 1.0))
-dev.off()
+invisible(dev.off())
 
 cat(sprintf("Successfully exported side-by-side tearsheet to '%s'.\n", output_path))
