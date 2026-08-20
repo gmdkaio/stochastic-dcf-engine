@@ -44,17 +44,31 @@ A traditional DCF valuation guesses a single future growth rate and profit margi
 ## Requirements
 
 - R 4.0 or later
-- R packages: `dplyr`, `janitor`, `tidyr`, `jsonlite`, `httr`, `ggplot2`, `gridExtra`, `scales`
+- R packages: `dplyr`, `janitor`, `tidyr`, `jsonlite`, `httr`, `ggplot2`, `gridExtra`, `scales`, `optparse`
 - A C compiler such as `gcc` or `clang`
 - `make`
 
 ## How to run
 
-From the project root:
+The engine is controlled from the command line. Both the report and visualization entry points accept the same flags for ticker, projection horizon, and reinvestment rate.
+
+From the project root, run the report:
 
 ```bash
-Rscript R/03_generate_report.R
+Rscript R/03_generate_report.R --ticker MSFT --years 10 --reinvest 0.35
 ```
+
+Or generate the tearsheet with the same inputs:
+
+```bash
+Rscript R/04_export_visuals.R --ticker MSFT --years 10 --reinvest 0.35
+```
+
+Available flags:
+
+- `-t`, `--ticker` — stock ticker symbol, default `AAPL`
+- `-y`, `--years` — number of projection years, default `5`
+- `-r`, `--reinvest` — reinvestment rate, default `0.20`
 
 ## Output
 
@@ -84,10 +98,10 @@ This creates `output/valuation_tearsheet.png` — a side-by-side dashboard showi
 
 ## Notes
 
+- Yahoo Finance API Limits: The engine pulls live historical financial data from Yahoo Finance. Because Yahoo heavily rate-limits automated requests, HTTP 429 or other non-200 responses trigger a graceful fallback to the offline empirical baseline without breaking the rest of the pipeline.
 - The C kernel uses xoshiro256++ with SplitMix64 seeding to generate normal random shocks ($Z \sim N(0,1)$) across dynamically allocated threads based on the host system's CPU core count.
 - The project is designed to be easy to extend with real data and additional risk factors.
 - The `Makefile` and FFI bridge detect the platform's dynamic library extension at build time (`.so` on Linux/macOS, `.dll` on Windows), so cross-platform builds work without manual changes.
-- If live Yahoo Finance API network requests fail or are rate-limited (HTTP 429 / 401), the ingestion script automatically fails over to an offline empirical baseline without breaking the execution pipeline.
 
 ## To do
 
