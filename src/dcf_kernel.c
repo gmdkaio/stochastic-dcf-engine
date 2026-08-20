@@ -84,25 +84,24 @@ typedef struct {
     double wacc_sd;
     double g;
     double reinvest_rate;
-    double *out_ptr; // Shared memory array
+    double L11, L21, L22, L31, L32, L33; // Cholesky Weights
+    double *out_ptr;
 } thread_data_t;
 
 // The function each CPU core will run independently
 void *monte_carlo_worker(void *arg) {
     thread_data_t *data = (thread_data_t *)arg;
-    
-    // Each thread gets its own isolated PRNG state
     rng_state_t rng;
     rng_init(&rng, data->seed);
 
     for (int i = data->start_idx; i < data->end_idx; i++) {
         
-        // FINANCE FIX [P0]: Rejection sampling for WACC.
-        // Ensures a minimum 1.5% economic spread over perpetual growth 
-        // without stacking probability mass on a hard boundary.
-        double wacc;
+        // 1. Draw WACC (Z1 - Macro Anchor)
+        double z_wacc, wacc;
         do {
-            wacc = data->wacc_mean + (rnorm_c(&rng) * data->wacc_sd);
+            z_wacc = rnorm_c(&rng);
+            // Z1 is directly scaled because L11 is always 1.0
+            wacc = data->wacc_mean + (z_wacc * data->wacc_sd);
         } while (wacc <= data->g + 0.015);
 
         double current_rev = data->base_rev;
@@ -110,10 +109,20 @@ void *monte_carlo_worker(void *arg) {
         double fcff = 0.0;
 
         for (int year = 1; year <= data->proj_years; year++) {
-            double rev_growth = data->rev_mean + (rnorm_c(&rng) * data->rev_sd);
+            
+            // 2. Draw independent yearly shocks
+            double z_rev = rnorm_c(&rng);
+            double z_margin = rnorm_c(&rng);
+
+            // 3. Apply Cholesky weights to create correlated shocks
+            double x_rev    = (data->L21 * z_wacc) + (data->L22 * z_rev);
+            double x_margin = (data->L31 * z_wacc) + (data->L32 * z_rev) + (data->L33 * z_margin);
+
+            // 4. Apply shocks to empirical means
+            double rev_growth = data->rev_mean + (x_rev * data->rev_sd);
             current_rev *= (1.0 + rev_growth);
 
-            double ebit_margin = data->ebit_mean + (rnorm_c(&rng) * data->ebit_sd);
+            double ebit_margin = data->ebit_mean + (x_margin * data->ebit_sd);
             double ebit = current_rev * ebit_margin;
             double nopat = ebit * (1.0 - data->tax_rate);
             
@@ -131,7 +140,6 @@ void *monte_carlo_worker(void *arg) {
         double term_val = (norm_fcff * (1.0 + data->g)) / (wacc - data->g);
         double pv_term  = term_val / pow(1.0 + wacc, (double)data->proj_years);
 
-        // Lock-free write to the shared array because indices never overlap
         data->out_ptr[i] = pv_sum + pv_term;
     }
     return NULL;
@@ -145,27 +153,26 @@ SEXP run_monte_carlo_dcf(
     SEXP r_n_sims, SEXP r_num_threads, SEXP r_proj_years, SEXP r_base_revenue, 
     SEXP r_rev_growth_mean, SEXP r_rev_growth_sd, SEXP r_ebit_margin_mean, 
     SEXP r_ebit_margin_sd, SEXP r_tax_rate, SEXP r_wacc_mean, SEXP r_wacc_sd, 
-    SEXP r_term_growth
+    SEXP r_term_growth, SEXP r_chol_weights
 ) {
     int n_sims = INTEGER(r_n_sims)[0];
     int NUM_THREADS = INTEGER(r_num_threads)[0];
     if (NUM_THREADS < 1) NUM_THREADS = 1;
     
-    // Allocate memory in R's heap BEFORE spawning threads
     SEXP r_out_val = PROTECT(allocVector(REALSXP, n_sims));
     double *out_ptr = REAL(r_out_val);
 
-    // Variable Length Arrays (VLA) for dynamic thread management
     pthread_t threads[NUM_THREADS];
     thread_data_t t_data[NUM_THREADS];
-
     int chunk_size = n_sims / NUM_THREADS;
+    
+    // Unpack Cholesky weights from R
+    double *chol = REAL(r_chol_weights);
 
-    // Dispatch workers
     for (int t = 0; t < NUM_THREADS; t++) {
         t_data[t].start_idx = t * chunk_size;
         t_data[t].end_idx = (t == NUM_THREADS - 1) ? n_sims : (t + 1) * chunk_size;
-        t_data[t].seed = 42ULL + t; // Seed stagger ensures true independence
+        t_data[t].seed = 42ULL + t; 
         
         t_data[t].proj_years = INTEGER(r_proj_years)[0];
         t_data[t].base_rev = REAL(r_base_revenue)[0];
@@ -178,12 +185,20 @@ SEXP run_monte_carlo_dcf(
         t_data[t].wacc_sd = REAL(r_wacc_sd)[0];
         t_data[t].g = REAL(r_term_growth)[0];
         t_data[t].reinvest_rate = 0.20;
+        
+        // Pass weights into thread struct
+        t_data[t].L11 = chol[0];
+        t_data[t].L21 = chol[1];
+        t_data[t].L22 = chol[2];
+        t_data[t].L31 = chol[3];
+        t_data[t].L32 = chol[4];
+        t_data[t].L33 = chol[5];
+
         t_data[t].out_ptr = out_ptr;
 
         pthread_create(&threads[t], NULL, monte_carlo_worker, &t_data[t]);
     }
 
-    // Wait for all threads to cross the finish line
     for (int t = 0; t < NUM_THREADS; t++) {
         pthread_join(threads[t], NULL);
     }

@@ -19,7 +19,7 @@ fetch_yahoo_financials <- function(ticker = "AAPL", use_fallback = FALSE) {
   
  # 1. Attempt Live API Ingestion with Yahoo Cookie Handshake
   if (!use_fallback) {
-    cat(sprintf("[Ingest] Querying Yahoo Finance API for '%s' financials...\n", ticker))
+    cat(sprintf("[Ingest] Querying Yahoo Finance API for '%s' financials...\n", ticker)) # nolint: line_length_linter.
     
     tryCatch({
       # Step A: Create a persistent handle and hit Yahoo to grab a session cookie
@@ -39,7 +39,7 @@ fetch_yahoo_financials <- function(ticker = "AAPL", use_fallback = FALSE) {
         payload <- content(response, as = "text", encoding = "UTF-8")
         json_data <- fromJSON(payload, flatten = TRUE)
         
-        stmts <- json_data$quoteSummary$result$incomeStatementHistory.incomeStatementHistory[[1]]
+        stmts <- json_data$quoteSummary$result$incomeStatementHistory.incomeStatementHistory[[1]] # nolint: line_length_linter.
         
         if (!is.null(stmts) && nrow(stmts) >= 3) {
           df <- data.frame(
