@@ -30,7 +30,6 @@ A traditional DCF valuation guesses a single future growth rate and profit margi
 
    - Currently, historical revenue and margin volatility are pulled directly from Yahoo Finance. Because the free API only provides 4 years of annuals, the R script applies Bayesian Shrinkage to blend the empirical data with a broader sector prior, ensuring the standard deviation ($\sigma$) is statistically robust.
    - The C kernel enforces mathematical boundary clamps to prevent physically impossible black-swan draws (e.g., a company's revenue dropping by 150%).
-   - *Next step:* Decoupling those defaults so you can customize assumptions on the fly via a command-line flag or GUI, or have them auto-adjust based on the company's industry.
 
 ## Project structure
 
