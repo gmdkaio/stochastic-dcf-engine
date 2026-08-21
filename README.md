@@ -97,13 +97,11 @@ This creates `output/valuation_tearsheet.png` — a side-by-side dashboard showi
 
 ## Notes
 
-- Yahoo Finance API Limits: The engine pulls live historical financial data from Yahoo Finance. Because Yahoo heavily rate-limits automated requests, HTTP 429 or other non-200 responses trigger a graceful fallback to the offline empirical baseline without breaking the rest of the pipeline.
+- Yahoo Finance API Limits: The engine pulls live historical financial data from Yahoo Finance. Because Yahoo heavily rate-limits automated requests, HTTP 429 or other non-200 responses trigger a fallback to the offline empirical baseline without breaking the rest of the pipeline.
 - The C kernel uses xoshiro256++ with SplitMix64 seeding to generate normal random shocks ($Z \sim N(0,1)$) across dynamically allocated threads based on the host system's CPU core count.
 - The project is designed to be easy to extend with real data and additional risk factors.
 - The `Makefile` and FFI bridge detect the platform's dynamic library extension at build time (`.so` on Linux/macOS, `.dll` on Windows), so cross-platform builds work without manual changes.
 
-## To do
-
-- [ ] **Dynamic Driver Configuration:** Replace hardcoded model defaults (like reinvestment rate, hurdle target, and projection years) with customizable inputs — likely via a GUI, config file, or CLI flags.
+## Next Steps
 - [ ] **Industry Segment Profiling:** Automatically adjust baseline financial assumptions depending on whether the target company is in tech, retail, manufacturing, etc.
 - [ ] **Buyout Premium Ladder:** Add a summary table showing the exact probability of an M&A acquisition at different price markups (+15%, +30%, +45%).
